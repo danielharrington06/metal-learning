@@ -8,5 +8,5 @@ kernel void vector_transform(
     uint index [[thread_position_in_grid]]
 ) {
     float x = a[index];
-    result[index] = sin(x * x + sqrt(abs(x)));
+    result[index] = sin(x) * x + sqrt(abs(x));
 }

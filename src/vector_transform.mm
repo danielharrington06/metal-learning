@@ -20,12 +20,13 @@ int main() {
         cpuResult[i] = transformCPU(input[i]);
     }
 
-    std::cout << "CPU result:\n"
+    std::cout << "CPU result:\n";
 
     for (float value : cpuResult) {
         std::cout << value << '\n';
     }
 
+    std::cout << '\n';
 
     // get the GPU
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
