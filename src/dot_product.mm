@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 
 float dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
     float result = 0.0f;
@@ -48,7 +49,7 @@ int main() {
     // load the compiled Metal library
     NSError* error = nil;
 
-    NSURL* libraryURL =  [NSURL fileURLWithPath:@"./bin/vector_transform.metallib"];
+    NSURL* libraryURL =  [NSURL fileURLWithPath:@"./bin/dot_product.metallib"];
 
     id<MTLLibrary> library = [device newLibraryWithURL:libraryURL error:&error];
 
@@ -62,11 +63,11 @@ int main() {
         return 1;
     }
 
-    // find vector_transform function (kernel)
-    id<MTLFunction> function = [library newFunctionWithName:@"vector_transform"];
+    // find multiply_vectors function (kernel)
+    id<MTLFunction> function = [library newFunctionWithName:@"multiply_vectors"];
 
     if (!function) {
-        std::cerr << "failed to find vector_transform function.\n";
+        std::cerr << "failed to find multiply_vectors function.\n";
         return 1;
     }
 
@@ -83,8 +84,10 @@ int main() {
     }
 
     // buffers
-    id<MTLBuffer> inputBuffer = [device newBufferWithBytes:input.data() length: input.size() * sizeof(float) options: MTLResourceStorageModeShared];
-    id<MTLBuffer> outputBuffer = [device newBufferWithLength: input.size() * sizeof(float) options: MTLResourceStorageModeShared];
+    NSUInteger count = a.size();
+    id<MTLBuffer> bufferA = [device newBufferWithBytes:a.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferB = [device newBufferWithBytes:b.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferProducts = [device newBufferWithLength: count * sizeof(float) options: MTLResourceStorageModeShared];
     // use MTLResourceStorageModeShared because Apple Silicon uses unified memory
 
     // create command buffer
@@ -107,12 +110,19 @@ int main() {
     [encoder setComputePipelineState:pipeline];
 
     // give kernel its buffers
-    [encoder setBuffer: inputBuffer offset:0 atIndex:0];
-    [encoder setBuffer: outputBuffer offset:0 atIndex:1];
+    [encoder setBuffer: bufferA offset:0 atIndex:0];
+    [encoder setBuffer: bufferB offset:0 atIndex:1];
+    [encoder setBuffer: bufferProducts offset:0 atIndex:2];
+
+    [encoder setBytes:&count length:sizeof(count) atIndex:3]; // TODO work out what this does
+
+    // calculate threadgroup size
+    NSUInteger threadgroupSize = pipeline.maxTotalThreadsPerThreadgroup
+    threadgroupSize = std::min(threadgroupSize, count);
 
     // dispatch GPU threads
-    NSUInteger count = input.size(); // for a vector of n elements, count is n
-    [encoder dispatchThreads: MTLSizeMake(count, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+    NSUInteger threadgroups = (count + threadgroupSize - 1) / threadgroupSize;
+    [encoder dispatchThreadgroups: MTLSizeMake(threadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
 
     // fimish and submit the work
     [encoder endEncoding]; // finished recording commands
@@ -120,11 +130,15 @@ int main() {
     [commandBuffer waitUntilCompleted]; // wait for the GPU to finish before we try to read the result
 
     // read the GPU result
-    float* gpuResult = static_cast<float*>(outputBuffer.contents);
+    float* gpuResult = static_cast<float*>(bufferProducts.contents);
 
-    for (NSUInteger i = 0; i < count; i++) {
-        std::cout << gpuResult[i] << '\n';
+    std::cout << "GPU partial products:\n";
+
+    for (NSUInteger i = 0; i < count; ++i) {
+        std::cout << products[i] << ' ';
     }
+
+    std::cout << '\n';
 
     return 0;
 }
