@@ -9,7 +9,7 @@ float dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
     float result = 0.0f;
 
     for (size_t i = 0; i < a.size(); i++) {
-        result += a[i] * b[i]
+        result += a[i] * b[i];
     }
 
     return result;
@@ -64,18 +64,38 @@ int main() {
     }
 
     // find multiply_vectors function (kernel)
-    id<MTLFunction> function = [library newFunctionWithName:@"multiply_vectors"];
+    id<MTLFunction> multiplicationFunction = [library newFunctionWithName:@"multiply_vectors"];
 
-    if (!function) {
+    if (!multiplicationFunction) {
         std::cerr << "failed to find multiply_vectors function.\n";
         return 1;
     }
 
-    // create the compute pipeline
-    id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction:function error:&error];
+    // create the multiplication pipeline
+    id<MTLComputePipelineState> multiplicationPipeline = [device newComputePipelineStateWithFunction:multiplicationFunction error:&error];
 
-    if (!pipeline) {
-        std::cerr << "Failed to create compute pipeline.\n";
+    if (!multiplicationPipeline) {
+        std::cerr << "Failed to create multiplication compute pipeline.\n";
+
+        if (error) {
+            std::cerr << [[error localizedDescription] UTF8String] << '\n';
+        }
+        return 1;
+    }
+
+    // find reduce_sum function
+    id<MTLFunction> reductionFunction = [library newFunctionWithName:@"reduce_sum"];
+
+    if (!reductionFunction) {
+        std::cerr << "failed to find reduce_sum function.\n";
+        return 1;
+    }
+
+    // create reduction pipeline
+    id<MTLComputePipelineState> reductionPipeline = [device newComputePipelineStateWithFunction:reductionFunction error:&error];
+
+    if (!reductionPipeline) {
+        std::cerr << "Failed to create reduction compute pipeline.\n";
 
         if (error) {
             std::cerr << [[error localizedDescription] UTF8String] << '\n';
@@ -84,11 +104,19 @@ int main() {
     }
 
     // buffers
+
     NSUInteger count = a.size();
     id<MTLBuffer> bufferA = [device newBufferWithBytes:a.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
     id<MTLBuffer> bufferB = [device newBufferWithBytes:b.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
     id<MTLBuffer> bufferProducts = [device newBufferWithLength: count * sizeof(float) options: MTLResourceStorageModeShared];
     // use MTLResourceStorageModeShared because Apple Silicon uses unified memory
+
+    // threadgroups and size
+    NSUInteger threadgroupSize = std::min(multiplicationPipeline.maxTotalThreadsPerThreadgroup, count);
+    NSUInteger numberOfThreadgroups = (count + threadgroupSize - 1) / threadgroupSize;
+
+    // each threadgroup produces one partial sum
+    id<MTLBuffer> bufferPartialSums = [device newBufferWithLength:numberOfThreadgroups * sizeof(float) options:MTLResourceStorageModeShared];
 
     // create command buffer
     id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
@@ -99,43 +127,69 @@ int main() {
     }
 
     // create a compute command encoder
-    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+    id<MTLComputeCommandEncoder> multiplicationEncoder = [commandBuffer computeCommandEncoder];
 
-    if (!encoder) {
-        std::cerr << "Failed to create compute encoder.\n";
+    if (!multiplicationEncoder) {
+        std::cerr << "Failed to create multiplication compute encoder.\n";
         return 1;
     }
 
     // tell encoder what kernel to run
-    [encoder setComputePipelineState:pipeline];
+    [multiplicationEncoder setComputePipelineState:multiplicationPipeline];
 
     // give kernel its buffers
-    [encoder setBuffer: bufferA offset:0 atIndex:0];
-    [encoder setBuffer: bufferB offset:0 atIndex:1];
-    [encoder setBuffer: bufferProducts offset:0 atIndex:2];
+    [multiplicationEncoder setBuffer: bufferA offset:0 atIndex:0];
+    [multiplicationEncoder setBuffer: bufferB offset:0 atIndex:1];
+    [multiplicationEncoder setBuffer: bufferProducts offset:0 atIndex:2];
 
-    [encoder setBytes:&count length:sizeof(count) atIndex:3]; // TODO work out what this does
-
-    // calculate threadgroup size
-    NSUInteger threadgroupSize = pipeline.maxTotalThreadsPerThreadgroup
-    threadgroupSize = std::min(threadgroupSize, count);
+    [multiplicationEncoder setBytes:&count length:sizeof(count) atIndex:3]; // TODO work out what this does
 
     // dispatch GPU threads
     NSUInteger threadgroups = (count + threadgroupSize - 1) / threadgroupSize;
-    [encoder dispatchThreadgroups: MTLSizeMake(threadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
+    [multiplicationEncoder dispatchThreadgroups: MTLSizeMake(numberOfThreadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
 
     // fimish and submit the work
-    [encoder endEncoding]; // finished recording commands
+    [multiplicationEncoder endEncoding]; // finished recording commands
+
+    // create encoder for reduction
+    id<MTLComputeCommandEncoder> reductionEncoder = [commandBuffer computeCommandEncoder];
+
+    if (!reductionEncoder) {
+        std::cerr << "Failed to create reduction encoder.\n";
+        return 1;
+    }
+
+    [reductionEncoder setComputePipelineState:reductionPipeline];
+
+    [reductionEncoder setBuffer:bufferProducts offset:0 atIndex:0];
+    [reductionEncoder setBuffer:bufferPartialSums offset:0 atIndex:1];
+    [reductionEncoder setBytes:&count length:sizeof(count) atIndex:2];
+    [reductionEncoder setBytes:&threadgroupSize length:sizeof(threadgroupSize) atIndex:3];
+
+    [reductionEncoder dispatchThreadgroups: MTLSizeMake(numberOfThreadgroups, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroupSize, 1, 1)];
+
+    [reductionEncoder endEncoding]; // finished recording reduction commands
+
     [commandBuffer commit]; // submit the command buffer to GPU
     [commandBuffer waitUntilCompleted]; // wait for the GPU to finish before we try to read the result
 
     // read the GPU result
-    float* gpuResult = static_cast<float*>(bufferProducts.contents);
+    float* gpuProducts = static_cast<float*>(bufferProducts.contents);
 
     std::cout << "GPU partial products:\n";
 
     for (NSUInteger i = 0; i < count; ++i) {
-        std::cout << products[i] << ' ';
+        std::cout << gpuProducts[i] << ' ';
+    }
+
+    std::cout << '\n';
+
+    float* gpuPartialSums = static_cast<float*>(bufferPartialSums.contents);
+
+    std::cout << "GPU partial sums:\n";
+
+    for (NSUInteger i = 0; i < numberOfThreadgroups; ++i) {
+        std::cout << gpuPartialSums[i] << ' ';
     }
 
     std::cout << '\n';
