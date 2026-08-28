@@ -45,3 +45,11 @@ Apple GPU
 xcrun -sdk macosx metal -c vector_add.metal -o vector_add.air
 xcrun -sdk macosx metallib vector_add.air -o vector_add.metallib
 ```
+
+Objective C
+```bash
+clang++ -std=c++17 metal_runner.mm \
+    -framework Metal \
+    -framework Foundation \
+    -o metal_runner
+```
