@@ -44,14 +44,14 @@ Apple GPU
 ## Compile & Run
 
 ```bash
-xcrun -sdk macosx metal -c vector_add.metal -o vector_add.air
-xcrun -sdk macosx metallib vector_add.air -o vector_add.metallib
+xcrun -sdk macosx metal -c shaders/filename.metal -o bin/filename.air
+xcrun -sdk macosx metallib bin/filename.air -o bin/filename.metallib
 ```
 
 Objective C
 ```bash
-clang++ -std=c++17 metal_runner.mm \
+clang++ -std=c++17 src/metal_runner.mm \
     -framework Metal \
     -framework Foundation \
-    -o metal_runner
+    -o bin/metal_runner
 ```
