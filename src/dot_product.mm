@@ -21,9 +21,10 @@ id<MTLDevice> createDevice() {
     if (!device) {
         std::cerr << "Failed to find a Metal device.\n";
     }
+    return device;
 }
 
-id<MTLLibrary> loadLibrary(id<MTLDevice device) {
+id<MTLLibrary> loadLibrary(id<MTLDevice> device) {
     NSError* error = nil;
 
     NSURL* libraryURL =  [NSURL fileURLWithPath:@"./bin/dot_product.metallib"];
@@ -37,6 +38,7 @@ id<MTLLibrary> loadLibrary(id<MTLDevice device) {
             std::cerr << [[error localizedDescription] UTF8String] << '\n';
         }
     }
+    return library;
 }
 
 id<MTLComputePipelineState> createPipeline(id<MTLDevice> device, id<MTLLibrary> library, const char* functionName) {
@@ -95,7 +97,7 @@ int main() {
     }
 
     // load Metal library
-    library = loadLibrary(device)
+    id<MTLLibrary> library = loadLibrary(device);
 
     if (!library) {
         return 1;
@@ -109,7 +111,7 @@ int main() {
         return 1;
     }
 
-    id<MTLComputePipelineState> multiplicationPipeline = createPipeline(device, library, "multiply_vectors");
+    id<MTLComputePipelineState> reductionPipeline = createPipeline(device, library, "reduce_sum");
 
     if (!reductionPipeline) {
         return 1;
