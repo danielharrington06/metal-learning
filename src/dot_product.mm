@@ -127,8 +127,9 @@ int main() {
 
     id<MTLBuffer> bufferA = [device newBufferWithBytes:a.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
     id<MTLBuffer> bufferB = [device newBufferWithBytes:b.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
-    id<MTLBuffer> bufferProducts = [device newBufferWithLength: count * sizeof(float) options: MTLResourceStorageModeShared];
-    id<MTLBuffer> bufferPartialSums = [device newBufferWithLength:numberOfThreadgroups * sizeof(float) options:MTLResourceStorageModeShared]; // each threadgroup produces one partial sum
+    id<MTLBuffer> bufferProducts = [device newBufferWithLength: count * sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> reductionBufferA = [device newBufferWithLength: count * sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> reductionBufferB = [device newBufferWithLength: count * sizeof(float) options:MTLResourceStorageModeShared];
 
     // create command buffer
     id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
@@ -166,24 +167,35 @@ int main() {
 
     // --- reduction
 
-    // create encoder for reduction
-    id<MTLComputeCommandEncoder> reductionEncoder = [commandBuffer computeCommandEncoder];
+    NSUInteger currentCount = count;
 
-    if (!reductionEncoder) {
-        std::cerr << "Failed to create reduction encoder.\n";
-        return 1;
+    id<MTLBuffer> currentInput = bufferProducts;
+    id<MTLBuffer> currentOutput = reductionBufferA;
+
+    while (currentCount > 1) {
+        NSUInteger currentThreadgroups = (currentCount + threadgroupSize - 1)/threadgroupSize;
+
+        id<MTLComputeCommandEncoder> reductionEncoder = [commandBuffer computeCommandEncoder];
+
+        if (!reductionEncoder) {
+            std::cerr << "Failed to create reduction encoder.\n";
+            return 1;
+        }
+
+        [reductionEncoder setComputePipelineState:reductionPipeline];
+        [reductionEncoder setBuffer:currentInput offset:0 atIndex: 0];
+        [reductionEncoder setBuffer:currentOutput offset:0 atIndex: 1];
+        [reductionEncoder setBytes:&currentCount length:sizeof(currentCount) atIndex: 2];
+        [reductionEncoder setBytes:&threadgroupSize length:sizeof(threadgroupSize) atIndex: 3];
+
+        [reductionEncoder dispatchThreadgroups:MTLSizeMake(currentThreadgroups, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroupSize, 1, 1)];
+
+        [reductionEncoder endEncoding];
+
+        currentCount = currentThreadgroups;
+
+        std::swap(currentInput, currentOutput);
     }
-
-    [reductionEncoder setComputePipelineState:reductionPipeline];
-
-    [reductionEncoder setBuffer:bufferProducts offset:0 atIndex:0];
-    [reductionEncoder setBuffer:bufferPartialSums offset:0 atIndex:1];
-    [reductionEncoder setBytes:&count length:sizeof(count) atIndex:2];
-    [reductionEncoder setBytes:&threadgroupSize length:sizeof(threadgroupSize) atIndex:3];
-
-    [reductionEncoder dispatchThreadgroups: MTLSizeMake(numberOfThreadgroups, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroupSize, 1, 1)];
-
-    [reductionEncoder endEncoding]; // finished recording reduction commands
 
     // --- execute GPU work
 
@@ -191,25 +203,9 @@ int main() {
     [commandBuffer waitUntilCompleted]; // wait for the GPU to finish before we try to read the result
 
     // --- read results
-    float* gpuProducts = static_cast<float*>(bufferProducts.contents);
+    float* gpuResult = static_cast<float*>(currentInput.contents);
 
-    std::cout << "GPU partial products:\n";
-
-    for (NSUInteger i = 0; i < count; ++i) {
-        std::cout << gpuProducts[i] << ' ';
-    }
-
-    std::cout << '\n';
-
-    float* gpuPartialSums = static_cast<float*>(bufferPartialSums.contents);
-
-    std::cout << "GPU partial sums:\n";
-
-    for (NSUInteger i = 0; i < numberOfThreadgroups; ++i) {
-        std::cout << gpuPartialSums[i] << ' ';
-    }
-
-    std::cout << '\n';
+    std::cout << "GPU result:" << gpuResult[0] << '\n';
 
     return 0;
 }
