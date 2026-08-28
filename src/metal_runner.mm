@@ -26,7 +26,7 @@ int main() {
     // load the compiled Metal library
     NSError* error = nil;
 
-    NSURL* libraryURL =  [NSURL fileURLWithPath:@"./vector_add.metallib"];
+    NSURL* libraryURL =  [NSURL fileURLWithPath:@"./bin/vector_add.metallib"];
 
     id<MTLLibrary> library = [device newLibraryWithURL:libraryURL error:&error];
 

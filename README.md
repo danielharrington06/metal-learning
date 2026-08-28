@@ -43,6 +43,7 @@ Apple GPU
 
 ## Compile & Run
 
+Metal `.air` and `.metallib`
 ```bash
 xcrun -sdk macosx metal -c shaders/filename.metal -o bin/filename.air
 xcrun -sdk macosx metallib bin/filename.air -o bin/filename.metallib
