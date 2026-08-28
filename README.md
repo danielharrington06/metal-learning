@@ -8,6 +8,10 @@ I am using this project to learn how to work with the GPU in order to parallelis
 
 - `vector_add.metal` contains the code that says for each thread, what to do and where to put the result. Here, it says to take one element from `a` and `b`, add them, and put the result in `result`.
 
+### 2. `vector_transform`
+- This code similarly makes use of GPU kernel for parallelised computation, this time just a single input to single output.
+- A CPU version of the transformation, `transformCPU`, was added to confirm correctness.
+
 ## Understanding Metal Objects
 
 ```bash
@@ -51,8 +55,8 @@ xcrun -sdk macosx metallib bin/filename.air -o bin/filename.metallib
 
 Objective C
 ```bash
-clang++ -std=c++17 src/metal_runner.mm \
+clang++ -std=c++17 src/filename.mm \
     -framework Metal \
     -framework Foundation \
-    -o bin/metal_runner
+    -o bin/filename
 ```
