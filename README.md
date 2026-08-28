@@ -2,11 +2,13 @@
 
 I am using this project to learn how to work with the GPU in order to parallelise computations, where possible.
 
-# Understanding So Far
+## Understanding So Far
 
-`vector_add.metal` contains the code that says for each thread, what to do and where to put the result. Here, it says to take one element from `a` and `b`, add them, and put the result in `result`.
+### 1. `vector_add`
 
-# Understanding Metal Objects
+- `vector_add.metal` contains the code that says for each thread, what to do and where to put the result. Here, it says to take one element from `a` and `b`, add them, and put the result in `result`.
+
+## Understanding Metal Objects
 
 ```bash
 MTLDevice
@@ -39,7 +41,7 @@ Apple GPU
 - MTLBuffer
     - a region of memory accessible to the GPU
 
-# Compile & Run
+## Compile & Run
 
 ```bash
 xcrun -sdk macosx metal -c vector_add.metal -o vector_add.air
