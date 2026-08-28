@@ -13,12 +13,12 @@ kernel void multiply_vectors(
 
 // reduce sum
 kernel void reduce_sum(
-    device float* values [[buffer(0)]],
+    device const float* values [[buffer(0)]],
     device float* partialSums [[buffer(1)]],
     constant uint& count [[buffer(2)]],
     constant uint& threadgroupSize [[buffer(3)]],
     uint threadIndex [[thread_index_in_threadgroup]],
-    uint groupIndex [[thread_position_in_grid]]
+    uint groupIndex [[threadgroup_position_in_grid]]
 ) {
     threadgroup float sharedData[1024];
 
@@ -43,6 +43,4 @@ kernel void reduce_sum(
     if (threadIndex == 0) {
         partialSums[groupIndex] = sharedData[0];
     }
-
-    // reduction implementation will go here
 }

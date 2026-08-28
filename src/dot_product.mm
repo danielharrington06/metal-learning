@@ -15,38 +15,15 @@ float dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
     return result;
 }
 
-int main() {
-    // test data
-    std::vector<float> a = {1, 2, 3, 4};
-    std::vector<float> b = {5, 9, -5, 2};
-
-    // first execute on CPU
-    float cpuResult = dotProductCPU(a, b);
-
-    std::cout << "CPU result: "
-              << cpuResult
-              << '\n';
-
-    // get the GPU
+id<MTLDevice> createDevice() {
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
 
     if (!device) {
         std::cerr << "Failed to find a Metal device.\n";
-        return 1;
     }
+}
 
-    std::cout << "GPU: " << [[device name] UTF8String] << '\n';
-    
-    // create a command queue
-
-    id<MTLCommandQueue> commandQueue = [device newCommandQueue];
-
-    if (!commandQueue) {
-        std::cerr << "Failed to create command queue\n";
-        return 1;
-    }
-
-    // load the compiled Metal library
+id<MTLLibrary> loadLibrary(id<MTLDevice device) {
     NSError* error = nil;
 
     NSURL* libraryURL =  [NSURL fileURLWithPath:@"./bin/dot_product.metallib"];
@@ -59,64 +36,97 @@ int main() {
         if (error) {
             std::cerr << [[error localizedDescription] UTF8String] << '\n';
         }
+    }
+}
 
+id<MTLComputePipelineState> createPipeline(id<MTLDevice> device, id<MTLLibrary> library, const char* functionName) {
+    id<MTLFunction> function = [library newFunctionWithName: [NSString stringWithUTF8String:functionName]];
+
+    if (!function) {
+        std::cerr << "Failed to find Metal function: " << functionName << '\n';
+
+        return nil;
+    }
+
+    NSError* error = nil;
+
+    id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction: function error:&error];
+
+    if (!pipeline) {
+        std::cerr << "Failed to create pipeline for: " << functionName << '\n';
+
+        if (error) {
+            std::cerr << [[error localizedDescription] UTF8String] << '\n';
+        }
+    }
+
+    return pipeline;
+}
+
+int main() {
+    // --- CPU computation
+
+    // test data
+    std::vector<float> a = {1, 2, 3, 4};
+    std::vector<float> b = {5, 9, -5, 2};
+
+    // first execute on CPU
+    float cpuResult = dotProductCPU(a, b);
+
+    std::cout << "CPU result: "
+              << cpuResult
+              << '\n';
+
+    // --- get the GPU
+    id<MTLDevice> device = createDevice();
+
+    if (!device) {
         return 1;
     }
 
-    // find multiply_vectors function (kernel)
-    id<MTLFunction> multiplicationFunction = [library newFunctionWithName:@"multiply_vectors"];
+    std::cout << "GPU: " << [[device name] UTF8String] << '\n';
+    
+    // create a command queue
+    id<MTLCommandQueue> commandQueue = [device newCommandQueue];
 
-    if (!multiplicationFunction) {
-        std::cerr << "failed to find multiply_vectors function.\n";
+    if (!commandQueue) {
+        std::cerr << "Failed to create command queue\n";
         return 1;
     }
 
-    // create the multiplication pipeline
-    id<MTLComputePipelineState> multiplicationPipeline = [device newComputePipelineStateWithFunction:multiplicationFunction error:&error];
+    // load Metal library
+    library = loadLibrary(device)
+
+    if (!library) {
+        return 1;
+    }
+
+    // create compute pipelines
+
+    id<MTLComputePipelineState> multiplicationPipeline = createPipeline(device, library, "multiply_vectors");
 
     if (!multiplicationPipeline) {
-        std::cerr << "Failed to create multiplication compute pipeline.\n";
-
-        if (error) {
-            std::cerr << [[error localizedDescription] UTF8String] << '\n';
-        }
         return 1;
     }
 
-    // find reduce_sum function
-    id<MTLFunction> reductionFunction = [library newFunctionWithName:@"reduce_sum"];
-
-    if (!reductionFunction) {
-        std::cerr << "failed to find reduce_sum function.\n";
-        return 1;
-    }
-
-    // create reduction pipeline
-    id<MTLComputePipelineState> reductionPipeline = [device newComputePipelineStateWithFunction:reductionFunction error:&error];
+    id<MTLComputePipelineState> multiplicationPipeline = createPipeline(device, library, "multiply_vectors");
 
     if (!reductionPipeline) {
-        std::cerr << "Failed to create reduction compute pipeline.\n";
-
-        if (error) {
-            std::cerr << [[error localizedDescription] UTF8String] << '\n';
-        }
         return 1;
     }
 
-    // buffers
+    // --- setup buffers
 
     NSUInteger count = a.size();
-    id<MTLBuffer> bufferA = [device newBufferWithBytes:a.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
-    id<MTLBuffer> bufferB = [device newBufferWithBytes:b.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
-    id<MTLBuffer> bufferProducts = [device newBufferWithLength: count * sizeof(float) options: MTLResourceStorageModeShared];
-    // use MTLResourceStorageModeShared because Apple Silicon uses unified memory
 
     // threadgroups and size
     NSUInteger threadgroupSize = std::min(multiplicationPipeline.maxTotalThreadsPerThreadgroup, count);
     NSUInteger numberOfThreadgroups = (count + threadgroupSize - 1) / threadgroupSize;
 
-    // each threadgroup produces one partial sum
-    id<MTLBuffer> bufferPartialSums = [device newBufferWithLength:numberOfThreadgroups * sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferA = [device newBufferWithBytes:a.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferB = [device newBufferWithBytes:b.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferProducts = [device newBufferWithLength: count * sizeof(float) options: MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferPartialSums = [device newBufferWithLength:numberOfThreadgroups * sizeof(float) options:MTLResourceStorageModeShared]; // each threadgroup produces one partial sum
 
     // create command buffer
     id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
@@ -125,6 +135,8 @@ int main() {
         std::cerr << "Failed to create command buffer.\n";
         return 1;
     }
+
+    // --- multiplication
 
     // create a compute command encoder
     id<MTLComputeCommandEncoder> multiplicationEncoder = [commandBuffer computeCommandEncoder];
@@ -138,18 +150,19 @@ int main() {
     [multiplicationEncoder setComputePipelineState:multiplicationPipeline];
 
     // give kernel its buffers
-    [multiplicationEncoder setBuffer: bufferA offset:0 atIndex:0];
-    [multiplicationEncoder setBuffer: bufferB offset:0 atIndex:1];
-    [multiplicationEncoder setBuffer: bufferProducts offset:0 atIndex:2];
+    [multiplicationEncoder setBuffer:bufferA offset:0 atIndex:0];
+    [multiplicationEncoder setBuffer:bufferB offset:0 atIndex:1];
+    [multiplicationEncoder setBuffer:bufferProducts offset:0 atIndex:2];
 
-    [multiplicationEncoder setBytes:&count length:sizeof(count) atIndex:3]; // TODO work out what this does
+    [multiplicationEncoder setBytes:&count length:sizeof(count) atIndex:3];
 
     // dispatch GPU threads
-    NSUInteger threadgroups = (count + threadgroupSize - 1) / threadgroupSize;
     [multiplicationEncoder dispatchThreadgroups: MTLSizeMake(numberOfThreadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
 
     // fimish and submit the work
     [multiplicationEncoder endEncoding]; // finished recording commands
+
+    // --- reduction
 
     // create encoder for reduction
     id<MTLComputeCommandEncoder> reductionEncoder = [commandBuffer computeCommandEncoder];
@@ -170,10 +183,12 @@ int main() {
 
     [reductionEncoder endEncoding]; // finished recording reduction commands
 
+    // --- execute GPU work
+
     [commandBuffer commit]; // submit the command buffer to GPU
     [commandBuffer waitUntilCompleted]; // wait for the GPU to finish before we try to read the result
 
-    // read the GPU result
+    // --- read results
     float* gpuProducts = static_cast<float*>(bufferProducts.contents);
 
     std::cout << "GPU partial products:\n";
