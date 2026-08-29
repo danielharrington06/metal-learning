@@ -12,6 +12,9 @@ I am using this project to learn how to work with the GPU in order to parallelis
 - This code similarly makes use of GPU kernel for parallelised computation, this time just a single input to single output.
 - A CPU version of the transformation, `transformCPU`, was added to confirm correctness.
 
+### 3. `dot_products`
+- This code calculates the dot_product of two vectors on the GPU by parallelising the multiplication, then using a tree-reduction approach to parallelise the summation.
+
 ## Understanding Metal Objects
 
 ```bash

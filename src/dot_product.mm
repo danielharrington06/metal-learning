@@ -66,11 +66,19 @@ id<MTLComputePipelineState> createPipeline(id<MTLDevice> device, id<MTLLibrary> 
 }
 
 int main() {
-    // --- CPU computation
 
     // test data
-    std::vector<float> a = {1, 2, 3, 4};
-    std::vector<float> b = {5, 9, -5, 2};
+    const size_t count = 10'000'000;
+
+    std::vector<float> a(count);
+    std::vector<float> b(count);
+
+    for (size_t i = 0; i < count; i++) {
+        a[i] = static_cast<float>(i % 100);
+        b[i] = static_cast<float>((i*3) % 100);
+    }
+
+    // --- CPU computation
 
     // first execute on CPU
     float cpuResult = dotProductCPU(a, b);
