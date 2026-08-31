@@ -21,6 +21,8 @@ I carried out benchmarking for calculating the dot product of two vectors as thi
 
 I used 50 warmup runs and 200 test runs.
 
+Here is some preliminary data that I have found.
+
 ```bash
 Dot Product Benchmark
 Vectors of size 100000000
