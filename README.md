@@ -61,5 +61,5 @@ Objective C
 clang++ -std=c++17 src/filename.mm \
     -framework Metal \
     -framework Foundation \
-    -o bin/filename.mm
+    -o bin/filename
 ```
