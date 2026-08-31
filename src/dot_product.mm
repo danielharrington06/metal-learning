@@ -4,12 +4,13 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <chrono>
 
-float dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
-    float result = 0.0f;
+double dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
+    double result = 0.0;
 
     for (size_t i = 0; i < a.size(); i++) {
-        result += a[i] * b[i];
+        result += static_cast<double>(a[i]) * static_cast<double>(b[i]);
     }
 
     return result;
@@ -80,12 +81,18 @@ int main() {
 
     // --- CPU computation
 
-    // first execute on CPU
-    float cpuResult = dotProductCPU(a, b);
+    using Clock = std::chrono::high_resolution_clock;
+    auto cpuStart = Clock::now();
 
-    std::cout << "CPU result: "
-              << cpuResult
-              << '\n';
+    // first execute on CPU
+    double cpuResult = dotProductCPU(a, b);
+
+    auto cpuEnd = Clock::now();
+
+    double cpuTime = std::chrono::duration<double, std::milli>(cpuEnd - cpuStart).count();
+
+    std::cout << "CPU result: " << cpuResult << '\n';
+    std::cout << "CPU time: " << cpuTime << " ms\n";
 
     // --- get the GPU
     id<MTLDevice> device = createDevice();
@@ -127,17 +134,17 @@ int main() {
 
     // --- setup buffers
 
-    NSUInteger count = a.size();
+    NSUInteger elementCount = a.size();
 
     // threadgroups and size
-    NSUInteger threadgroupSize = std::min(multiplicationPipeline.maxTotalThreadsPerThreadgroup, count);
-    NSUInteger numberOfThreadgroups = (count + threadgroupSize - 1) / threadgroupSize;
+    NSUInteger threadgroupSize = std::min(multiplicationPipeline.maxTotalThreadsPerThreadgroup, elementCount);
+    NSUInteger numberOfThreadgroups = (elementCount + threadgroupSize - 1) / threadgroupSize;
 
-    id<MTLBuffer> bufferA = [device newBufferWithBytes:a.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
-    id<MTLBuffer> bufferB = [device newBufferWithBytes:b.data() length: count * sizeof(float) options: MTLResourceStorageModeShared];
-    id<MTLBuffer> bufferProducts = [device newBufferWithLength: count * sizeof(float) options:MTLResourceStorageModeShared];
-    id<MTLBuffer> reductionBufferA = [device newBufferWithLength: count * sizeof(float) options:MTLResourceStorageModeShared];
-    id<MTLBuffer> reductionBufferB = [device newBufferWithLength: count * sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferA = [device newBufferWithBytes:a.data() length: elementCount * sizeof(float) options: MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferB = [device newBufferWithBytes:b.data() length: elementCount * sizeof(float) options: MTLResourceStorageModeShared];
+    id<MTLBuffer> bufferProducts = [device newBufferWithLength: elementCount * sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> reductionBufferA = [device newBufferWithLength: elementCount * sizeof(float) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> reductionBufferB = [device newBufferWithLength: elementCount * sizeof(float) options:MTLResourceStorageModeShared];
 
     // create command buffer
     id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
@@ -164,8 +171,9 @@ int main() {
     [multiplicationEncoder setBuffer:bufferA offset:0 atIndex:0];
     [multiplicationEncoder setBuffer:bufferB offset:0 atIndex:1];
     [multiplicationEncoder setBuffer:bufferProducts offset:0 atIndex:2];
+    [multiplicationEncoder setBytes:&elementCount length:sizeof(elementCount) atIndex:3];
 
-    [multiplicationEncoder setBytes:&count length:sizeof(count) atIndex:3];
+    [multiplicationEncoder setBytes:&elementCount length:sizeof(elementCount) atIndex:3];
 
     // dispatch GPU threads
     [multiplicationEncoder dispatchThreadgroups: MTLSizeMake(numberOfThreadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
@@ -175,7 +183,7 @@ int main() {
 
     // --- reduction
 
-    NSUInteger currentCount = count;
+    NSUInteger currentCount = elementCount;
 
     id<MTLBuffer> currentInput = bufferProducts;
     id<MTLBuffer> currentOutput = reductionBufferA;
@@ -206,14 +214,24 @@ int main() {
     }
 
     // --- execute GPU work
+    
+    auto gpuStart = Clock::now();
 
     [commandBuffer commit]; // submit the command buffer to GPU
     [commandBuffer waitUntilCompleted]; // wait for the GPU to finish before we try to read the result
 
+    auto gpuEnd = Clock::now();
+
+    double gpuTime = std::chrono::duration<double, std::milli>(gpuEnd - gpuStart).count();
+
     // --- read results
     float* gpuResult = static_cast<float*>(currentInput.contents);
 
-    std::cout << "GPU result:" << gpuResult[0] << '\n';
+    std::cout << "GPU result: " << gpuResult[0] << '\n';
+    std::cout << "GPU time: " << gpuTime << " ms\n";
+
+    double speedup = cpuTime / gpuTime;
+    std::cout << "GPU speedup: " << speedup << "x\n";
 
     return 0;
 }

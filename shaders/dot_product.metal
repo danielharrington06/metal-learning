@@ -6,9 +6,12 @@ kernel void multiply_vectors(
     device const float* a [[buffer(0)]],
     device const float* b [[buffer(1)]],
     device float* result [[buffer(2)]],
+    constant uint& count [[buffer(3)]],
     uint index [[thread_position_in_grid]]
 ) {
-    result[index] = a[index] * b[index];
+    if (index < count) {
+        result[index] = a[index] * b[index];    
+    }
 }
 
 // reduce sum
