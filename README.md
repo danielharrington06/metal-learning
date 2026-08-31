@@ -19,7 +19,29 @@ I am using this project to learn how to work with the GPU in order to parallelis
 
 I carried out benchmarking for calculating the dot product of two vectors as this involved parallel computations on respective elements on respective elements of a vector then parallel reduction, making it more interesting than the first two computations that I wrote.
 
+I used 50 warmup runs and 200 test runs.
 
+```bash
+Dot Product Benchmark
+Vectors of size 100000000
+50 Warmup Runs
+200 Test Runs
+
+CPU Time Average: 264.437ms
+GPU Time Average: 27.122ms
+GPU speedup: 9.74991x
+```
+
+```bash
+Dot Product Benchmark
+Vectors of size 10000000
+50 Warmup Runs
+200 Test Runs
+
+CPU Time Average: 26.019ms
+GPU Time Average: 6.70938ms
+GPU speedup: 3.87801x
+```
 
 ## Understanding Metal Objects
 

@@ -7,9 +7,9 @@
 #include <chrono>
 #include <random>
 
-const size_t count = 10'000'000;
-const size_t warmupCount = 10;
-const size_t testCount = 100;
+const size_t count = 100'000'000;
+const size_t warmupCount = 50;
+const size_t testCount = 200;
 
 double dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
     double result = 0.0;
