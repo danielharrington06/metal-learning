@@ -5,6 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <random>
 
 double dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
     double result = 0.0;
@@ -14,6 +15,73 @@ double dotProductCPU(const std::vector<float>& a, const std::vector<float>& b) {
     }
 
     return result;
+}
+
+double dotProductGPU(
+    id<MTLCommandQueue> commandQueue,
+    id<MTLComputePipelineState> multiplicationPipeline,
+    id<MTLComputePipelineState> reductionPipeline,
+    id<MTLBuffer> bufferA,
+    id<MTLBuffer> bufferB,
+    id<MTLBuffer> bufferProducts,
+    id<MTLBuffer> reductionBufferA,
+    id<MTLBuffer> reductionBufferB,
+    NSUInteger elementCount,
+    NSUInteger threadgroupSize
+) {
+    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+
+    // Multiplication
+    id<MTLComputeCommandEncoder> multiplicationEncoder = [commandBuffer computeCommandEncoder];
+
+    [multiplicationEncoder setComputePipelineState:multiplicationPipeline];
+
+    [multiplicationEncoder setBuffer:bufferA offset:0 atIndex:0];
+    [multiplicationEncoder setBuffer:bufferB offset:0 atIndex:1];
+    [multiplicationEncoder setBuffer:bufferProducts offset:0 atIndex:2];
+    [multiplicationEncoder setBytes:&elementCount length:sizeof(elementCount) atIndex:3];
+
+    NSUInteger numberOfThreadgroups = (elementCount + threadgroupSize - 1) / threadgroupSize;
+
+    [multiplicationEncoder dispatchThreadgroups: MTLSizeMake(numberOfThreadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
+    
+    [multiplicationEncoder endEncoding];
+
+    // Reduction
+    NSUInteger currentCount = elementCount;
+
+    id<MTLBuffer> currentInput = bufferProducts;
+    id<MTLBuffer> currentOutput = reductionBufferA;
+
+    while (currentCount > 1) {
+
+        NSUInteger currentThreadgroups = (currentCount + threadgroupSize - 1) / threadgroupSize;
+
+        id<MTLComputeCommandEncoder> reductionEncoder = [commandBuffer computeCommandEncoder];
+
+        [reductionEncoder setComputePipelineState:reductionPipeline];
+
+        [reductionEncoder setBuffer:currentInput offset:0 atIndex:0];
+        [reductionEncoder setBuffer:currentOutput offset:0 atIndex:1];
+
+        [reductionEncoder setBytes:&currentCount length:sizeof(currentCount) atIndex:2];
+
+        [reductionEncoder setBytes:&threadgroupSize length:sizeof(threadgroupSize) atIndex:3];
+
+        [reductionEncoder dispatchThreadgroups: MTLSizeMake(currentThreadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
+
+        [reductionEncoder endEncoding];
+
+        currentCount = currentThreadgroups;
+        std::swap(currentInput, currentOutput);
+    }
+
+    [commandBuffer commit];
+    [commandBuffer waitUntilCompleted];
+
+    float* result = static_cast<float*>(currentInput.contents);
+
+    return result[0];
 }
 
 id<MTLDevice> createDevice() {
@@ -68,8 +136,16 @@ id<MTLComputePipelineState> createPipeline(id<MTLDevice> device, id<MTLLibrary> 
 
 int main() {
 
-    // test data
+    // variables
     const size_t count = 10'000'000;
+    const size_t warmupCount = 10;
+    const size_t testCount = 100;
+
+    using Clock = std::chrono::high_resolution_clock;
+    auto cpuStart = Clock::now();
+
+    std::vector<double> cpuTimes(testCount);
+    std::vector<double> gpuTimes(testCount);
 
     std::vector<float> a(count);
     std::vector<float> b(count);
@@ -79,29 +155,12 @@ int main() {
         b[i] = static_cast<float>((i*3) % 100);
     }
 
-    // --- CPU computation
-
-    using Clock = std::chrono::high_resolution_clock;
-    auto cpuStart = Clock::now();
-
-    // first execute on CPU
-    double cpuResult = dotProductCPU(a, b);
-
-    auto cpuEnd = Clock::now();
-
-    double cpuTime = std::chrono::duration<double, std::milli>(cpuEnd - cpuStart).count();
-
-    std::cout << "CPU result: " << cpuResult << '\n';
-    std::cout << "CPU time: " << cpuTime << " ms\n";
-
     // --- get the GPU
     id<MTLDevice> device = createDevice();
 
     if (!device) {
         return 1;
     }
-
-    std::cout << "GPU: " << [[device name] UTF8String] << '\n';
     
     // create a command queue
     id<MTLCommandQueue> commandQueue = [device newCommandQueue];
@@ -146,91 +205,61 @@ int main() {
     id<MTLBuffer> reductionBufferA = [device newBufferWithLength: elementCount * sizeof(float) options:MTLResourceStorageModeShared];
     id<MTLBuffer> reductionBufferB = [device newBufferWithLength: elementCount * sizeof(float) options:MTLResourceStorageModeShared];
 
-    // create command buffer
-    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-
-    if (!commandBuffer) {
-        std::cerr << "Failed to create command buffer.\n";
-        return 1;
+    for (int i = 0; i < warmupCount; i++) {
+        dotProductCPU(a, b);
+        dotProductGPU(commandQueue, multiplicationPipeline, reductionPipeline, bufferA, bufferB, bufferProducts, reductionBufferA, reductionBufferB, elementCount, threadgroupSize);
     }
 
-    // --- multiplication
+    double cpuResult;
+    double gpuResult;
 
-    // create a compute command encoder
-    id<MTLComputeCommandEncoder> multiplicationEncoder = [commandBuffer computeCommandEncoder];
+    for (int i = 0; i < testCount; i++) {
+        // CPU
+        auto cpuStart = Clock::now();
 
-    if (!multiplicationEncoder) {
-        std::cerr << "Failed to create multiplication compute encoder.\n";
-        return 1;
+        cpuResult = dotProductCPU(a, b);
+
+        auto cpuEnd = Clock::now();
+
+        cpuTimes[i] = std::chrono::duration<double, std::milli>(cpuEnd - cpuStart).count();
+
+        // GPU
+        auto gpuStart = Clock::now();
+
+        gpuResult = dotProductGPU(
+            commandQueue,
+            multiplicationPipeline,
+            reductionPipeline,
+            bufferA,
+            bufferB,
+            bufferProducts,
+            reductionBufferA,
+            reductionBufferB,
+            elementCount,
+            threadgroupSize
+        );
+
+        auto gpuEnd = Clock::now();
+
+        gpuTimes[i] =
+            std::chrono::duration<double, std::milli>(
+                gpuEnd - gpuStart
+            ).count();
     }
 
-    // tell encoder what kernel to run
-    [multiplicationEncoder setComputePipelineState:multiplicationPipeline];
+    double cpuAverage = std::accumulate(cpuTimes.begin(), cpuTimes.end(), 0.0) / testCount;
 
-    // give kernel its buffers
-    [multiplicationEncoder setBuffer:bufferA offset:0 atIndex:0];
-    [multiplicationEncoder setBuffer:bufferB offset:0 atIndex:1];
-    [multiplicationEncoder setBuffer:bufferProducts offset:0 atIndex:2];
-    [multiplicationEncoder setBytes:&elementCount length:sizeof(elementCount) atIndex:3];
+    double gpuAverage = std::accumulate(gpuTimes.begin(), gpuTimes.end(), 0.0) / testCount;
 
-    [multiplicationEncoder setBytes:&elementCount length:sizeof(elementCount) atIndex:3];
+    std::cout << "Dot Product Benchmark\n";
+    std::cout << "Vectors of size " << elementCount << '\n';
+    std::cout << warmupCount << " Warmup Runs\n";
+    std::cout << testCount << " Test Runs\n\n";
 
-    // dispatch GPU threads
-    [multiplicationEncoder dispatchThreadgroups: MTLSizeMake(numberOfThreadgroups, 1, 1) threadsPerThreadgroup: MTLSizeMake(threadgroupSize, 1, 1)];
+    std::cout << "CPU Time Average: " << cpuAverage << "ms\n";
+    std::cout << "GPU Time Average: " << gpuAverage << "ms\n";
 
-    // fimish and submit the work
-    [multiplicationEncoder endEncoding]; // finished recording commands
-
-    // --- reduction
-
-    NSUInteger currentCount = elementCount;
-
-    id<MTLBuffer> currentInput = bufferProducts;
-    id<MTLBuffer> currentOutput = reductionBufferA;
-
-    while (currentCount > 1) {
-        NSUInteger currentThreadgroups = (currentCount + threadgroupSize - 1)/threadgroupSize;
-
-        id<MTLComputeCommandEncoder> reductionEncoder = [commandBuffer computeCommandEncoder];
-
-        if (!reductionEncoder) {
-            std::cerr << "Failed to create reduction encoder.\n";
-            return 1;
-        }
-
-        [reductionEncoder setComputePipelineState:reductionPipeline];
-        [reductionEncoder setBuffer:currentInput offset:0 atIndex: 0];
-        [reductionEncoder setBuffer:currentOutput offset:0 atIndex: 1];
-        [reductionEncoder setBytes:&currentCount length:sizeof(currentCount) atIndex: 2];
-        [reductionEncoder setBytes:&threadgroupSize length:sizeof(threadgroupSize) atIndex: 3];
-
-        [reductionEncoder dispatchThreadgroups:MTLSizeMake(currentThreadgroups, 1, 1) threadsPerThreadgroup:MTLSizeMake(threadgroupSize, 1, 1)];
-
-        [reductionEncoder endEncoding];
-
-        currentCount = currentThreadgroups;
-
-        std::swap(currentInput, currentOutput);
-    }
-
-    // --- execute GPU work
-    
-    auto gpuStart = Clock::now();
-
-    [commandBuffer commit]; // submit the command buffer to GPU
-    [commandBuffer waitUntilCompleted]; // wait for the GPU to finish before we try to read the result
-
-    auto gpuEnd = Clock::now();
-
-    double gpuTime = std::chrono::duration<double, std::milli>(gpuEnd - gpuStart).count();
-
-    // --- read results
-    float* gpuResult = static_cast<float*>(currentInput.contents);
-
-    std::cout << "GPU result: " << gpuResult[0] << '\n';
-    std::cout << "GPU time: " << gpuTime << " ms\n";
-
-    double speedup = cpuTime / gpuTime;
+    double speedup = cpuAverage / gpuAverage;
     std::cout << "GPU speedup: " << speedup << "x\n";
 
     return 0;

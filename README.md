@@ -15,6 +15,12 @@ I am using this project to learn how to work with the GPU in order to parallelis
 ### 3. `dot_products`
 - This code calculates the dot_product of two vectors on the GPU by parallelising the multiplication, then using a tree-reduction approach to parallelise the summation.
 
+## Benchmarking
+
+I carried out benchmarking for calculating the dot product of two vectors as this involved parallel computations on respective elements on respective elements of a vector then parallel reduction, making it more interesting than the first two computations that I wrote.
+
+
+
 ## Understanding Metal Objects
 
 ```bash
